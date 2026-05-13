@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KMZ Overlay Editor</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.4.0/mapbox-gl.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="config.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; background: #1a1a2e; }
+
+  #sidebar {
+    width: 320px;
+    min-width: 320px;
+    background: #16213e;
+    color: #eee;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.4);
+  }
+
+  #sidebar h1 {
+    font-size: 15px;
+    padding: 16px;
+    background: #0f3460;
+    letter-spacing: 0.5px;
+    color: #e94560;
+  }
+
+  .section {
+    padding: 14px 16px;
+    border-bottom: 1px solid #0f3460;
+  }
+
+  .section h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+
+  #drop-zone {
+    border: 2px dashed #0f3460;
+    border-radius: 8px;
+    padding: 24px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #aaa;
+    font-size: 13px;
+  }
+
+  #drop-zone:hover, #drop-zone.dragover {
+    border-color: #e94560;
+    background: rgba(233,69,96,0.08);
+    color: #e94560;
+  }
+
+  #drop-zone input { display: none; }
+
+  .file-info {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #888;
+    word-break: break-all;
+  }
+
+  label {
+    display: block;
+    font-size: 11px;
+    color: #aaa;
+    margin-bottom: 4px;
+    margin-top: 10px;
+  }
+
+  input[type=number], input[type=range] {
+    width: 100%;
+    background: #0f3460;
+    border: 1px solid #1a4a8a;
+    color: #eee;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  input[type=number]:focus {
+    outline: none;
+    border-color: #e94560;
+  }
+
+  .coord-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .coord-group label { margin-top: 0; }
+
+  .corner-label {
+    font-size: 10px;
+    color: #e94560;
+    font-weight: bold;
+    margin-bottom: 2px;
+  }
+
+  button {
+    width: 100%;
+    padding: 9px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    transition: all 0.2s;
+  }
+
+  #btn-apply {
+    background: #e94560;
+    color: #fff;
+    margin-top: 12px;
+  }
+
+  #btn-apply:hover { background: #c73652; }
+
+  #btn-export {
+    background: #0f3460;
+    color: #eee;
+    margin-top: 8px;
+  }
+
+  #btn-export:hover { background: #1a4a8a; }
+  #btn-export:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #btn-reset-view {
+    background: #1a4a8a;
+    color: #eee;
+    margin-top: 8px;
+  }
+  #btn-reset-view:hover { background: #2560b0; }
+
+  .opacity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .opacity-row input[type=range] { flex: 1; }
+  .opacity-val { font-size: 12px; color: #aaa; min-width: 32px; text-align: right; }
+
+  #status {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #888;
+    min-height: 16px;
+  }
+
+  #map-container {
+    flex: 1;
+    position: relative;
+  }
+
+  #map { width: 100%; height: 100%; }
+
+  /* Overlay canvas on top of map */
+  #overlay-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* Handle layer for dragging */
+  #handle-layer {
+    position: absolute;
+    top: 0; left: 0;
+    z-index: 6;
+  }
+
+  .corner-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: #e94560;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    cursor: crosshair;
+    transform: translate(-50%, -50%);
+    z-index: 7;
+  }
+
+  .center-handle {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: rgba(233,69,96,0.7);
+    border: 2px solid #fff;
+    border-radius: 50%;
+    cursor: move;
+    transform: translate(-50%, -50%);
+    z-index: 7;
+  }
+
+  #mode-bar {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: rgba(15,52,96,0.92);
+    border-radius: 20px;
+    padding: 6px 8px;
+    display: flex;
+    gap: 6px;
+  }
+
+  .mode-btn {
+    width: auto;
+    padding: 5px 14px;
+    border-radius: 14px;
+    font-size: 12px;
+    background: transparent;
+    color: #aaa;
+    border: 1px solid transparent;
+  }
+
+  .mode-btn.active {
+    background: #e94560;
+    color: #fff;
+    border-color: #e94560;
+  }
+
+  .tip {
+    font-size: 10px;
+    color: #666;
+    margin-top: 6px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>KMZ Overlay Editor</h1>
+
+  <div class="section">
+    <h2>1. KMZファイル読み込み</h2>
+    <div id="drop-zone">
+      <div>KMZをドロップ</div>
+      <div style="font-size:11px;margin-top:4px">またはクリックして選択</div>
+      <input type="file" id="file-input" accept=".kmz,.kml">
+    </div>
+    <div class="file-info" id="file-info"></div>
+    <div id="status"></div>
+  </div>
+
+  <div class="section">
+    <h2>2. 透明度</h2>
+    <div class="opacity-row">
+      <input type="range" id="opacity" min="0" max="100" value="70">
+      <span class="opacity-val" id="opacity-val">70%</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>3. 座標調整（4コーナー）</h2>
+    <div class="tip">地図上のハンドルをドラッグするか、数値を直接入力してください。<br>「適用」ボタンで反映されます。</div>
+
+    <div class="coord-grid">
+      <div class="coord-group">
+        <div class="corner-label">北西 (NW)</div>
+        <label>緯度</label>
+        <input type="number" id="nw-lat" step="0.0001" placeholder="35.0000">
+        <label>経度</label>
+        <input type="number" id="nw-lng" step="0.0001" placeholder="135.0000">
+      </div>
+      <div class="coord-group">
+        <div class="corner-label">北東 (NE)</div>
+        <label>緯度</label>
+        <input type="number" id="ne-lat" step="0.0001" placeholder="35.0000">
+        <label>経度</label>
+        <input type="number" id="ne-lng" step="0.0001" placeholder="135.0001">
+      </div>
+      <div class="coord-group">
+        <div class="corner-label">南西 (SW)</div>
+        <label>緯度</label>
+        <input type="number" id="sw-lat" step="0.0001" placeholder="34.9999">
+        <label>経度</label>
+        <input type="number" id="sw-lng" step="0.0001" placeholder="135.0000">
+      </div>
+      <div class="coord-group">
+        <div class="corner-label">南東 (SE)</div>
+        <label>緯度</label>
+        <input type="number" id="se-lat" step="0.0001" placeholder="34.9999">
+        <label>経度</label>
+        <input type="number" id="se-lng" step="0.0001" placeholder="135.0001">
+      </div>
+    </div>
+
+    <button id="btn-apply">適用</button>
+  </div>
+
+  <div class="section">
+    <h2>4. エクスポート</h2>
+    <label>レイヤー名 / ファイル名</label>
+    <input type="text" id="export-name" placeholder="overlay_adjusted" style="width:100%;background:#0f3460;border:1px solid #1a4a8a;color:#eee;border-radius:4px;padding:5px 8px;font-size:12px;">
+    <button id="btn-export" disabled>KMZとして書き出し</button>
+    <button id="btn-reset-view">現在の画像にズーム</button>
+  </div>
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+  <canvas id="overlay-canvas"></canvas>
+  <div id="handle-layer"></div>
+
+  <div id="mode-bar">
+    <button class="mode-btn active" id="mode-map" onclick="setMode('map')">地図操作</button>
+    <button class="mode-btn" id="mode-overlay" onclick="setMode('overlay')">オーバーレイ調整</button>
+    <button class="mode-btn" id="mode-move" onclick="setMode('move')">画像移動</button>
+  </div>
+</div>
+
+<script>
+// ── Mapbox setup ──────────────────────────────────────────────
+mapboxgl.accessToken = CONFIG.mapboxToken;
+
+const map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/streets-v12',
+  center: [135.5, 34.7],
+  zoom: 10
+});
+
+map.addControl(new mapboxgl.NavigationControl());
+map.addControl(new mapboxgl.ScaleControl());
+
+// ── Tileset overlay config ────────────────────────────────────
+const TILESET_ID = CONFIG.tilesetId;
+const TILESET_LAYER_NAME = CONFIG.tilesetLayerName;
+
+map.on('load', () => {
+  // 日本語化
+  map.getStyle().layers.forEach(layer => {
+    if (!layer.layout || !layer.layout['text-field']) return;
+    // ref（道路番号）専用レイヤーのみ ref を使う。それ以外は name_ja → name の順で表示。
+    if (layer.id.includes('road-number') || layer.id.includes('shield')) {
+      map.setLayoutProperty(layer.id, 'text-field', ['coalesce', ['get', 'ref'], ['get', 'name']]);
+    } else {
+      map.setLayoutProperty(layer.id, 'text-field', ['coalesce', ['get', 'name_ja'], ['get', 'name']]);
+    }
+  });
+
+  if (TILESET_ID && TILESET_LAYER_NAME) {
+    map.addSource('custom-tileset', {
+      type: 'vector',
+      url: `mapbox://${TILESET_ID}`
+    });
+
+    map.addLayer({
+      id: 'tileset-fill',
+      type: 'fill',
+      source: 'custom-tileset',
+      'source-layer': TILESET_LAYER_NAME,
+      paint: {
+        'fill-color': '#ff6666',
+        'fill-opacity': 0.4
+      }
+    });
+
+    map.addLayer({
+      id: 'tileset-line',
+      type: 'line',
+      source: 'custom-tileset',
+      'source-layer': TILESET_LAYER_NAME,
+      paint: {
+        'line-color': '#cc0000',
+        'line-width': 1.5
+      }
+    });
+  }
+});
+
+// ── State ─────────────────────────────────────────────────────
+let overlayImage = null;   // HTMLImageElement
+let overlayImageURL = null;
+let corners = null;        // {nw, ne, sw, se} each {lat, lng}
+let currentMode = 'map';
+let opacity = 0.7;
+
+const canvas = document.getElementById('overlay-canvas');
+const ctx = canvas.getContext('2d');
+const handleLayer = document.getElementById('handle-layer');
+
+// ── Utility: lngLat → pixel ───────────────────────────────────
+function lngLatToPixel(lng, lat) {
+  const pt = map.project([lng, lat]);
+  return { x: pt.x, y: pt.y };
+}
+
+function pixelToLngLat(x, y) {
+  const ll = map.unproject([x, y]);
+  return { lng: ll.lng, lat: ll.lat };
+}
+
+// ── Draw overlay on canvas ────────────────────────────────────
+function resizeCanvas() {
+  const container = document.getElementById('map-container');
+  canvas.width = container.clientWidth;
+  canvas.height = container.clientHeight;
+}
+
+function drawOverlay() {
+  if (!overlayImage || !corners) return;
+  resizeCanvas();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const nw = lngLatToPixel(corners.nw.lng, corners.nw.lat);
+  const ne = lngLatToPixel(corners.ne.lng, corners.ne.lat);
+  const sw = lngLatToPixel(corners.sw.lng, corners.sw.lat);
+  const se = lngLatToPixel(corners.se.lng, corners.se.lat);
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+
+  // Perspective transform via 3 triangles
+  drawTexturedQuad(ctx, overlayImage, nw, ne, sw, se);
+
+  ctx.restore();
+
+  updateHandles(nw, ne, sw, se);
+}
+
+// Perspective-correct quad rendering using two triangles
+function drawTexturedQuad(ctx, img, nw, ne, sw, se) {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+
+  // Triangle 1: nw, ne, sw  →  img: (0,0),(w,0),(0,h)
+  drawTexturedTriangle(ctx, img,
+    nw.x, nw.y,   0, 0,
+    ne.x, ne.y,   w, 0,
+    sw.x, sw.y,   0, h
+  );
+  // Triangle 2: ne, se, sw  →  img: (w,0),(w,h),(0,h)
+  drawTexturedTriangle(ctx, img,
+    ne.x, ne.y,   w, 0,
+    se.x, se.y,   w, h,
+    sw.x, sw.y,   0, h
+  );
+}
+
+function drawTexturedTriangle(ctx, img,
+  x0, y0, u0, v0,
+  x1, y1, u1, v1,
+  x2, y2, u2, v2
+) {
+  const imgW = img.naturalWidth;
+  const imgH = img.naturalHeight;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.closePath();
+  ctx.clip();
+
+  // Compute affine transform from texture to screen
+  const denom = (u0 * (v1 - v2) + u1 * (v2 - v0) + u2 * (v0 - v1));
+  if (Math.abs(denom) < 1e-10) { ctx.restore(); return; }
+
+  const a = ((x0 * (v1 - v2) + x1 * (v2 - v0) + x2 * (v0 - v1)) / denom) * (imgW / imgW);
+  const b = ((y0 * (v1 - v2) + y1 * (v2 - v0) + y2 * (v0 - v1)) / denom);
+  const c = ((x0 * (u2 - u1) + x1 * (u0 - u2) + x2 * (u1 - u0)) / denom);
+  const d = ((y0 * (u2 - u1) + y1 * (u0 - u2) + y2 * (u1 - u0)) / denom);
+  const e = x0 - a * u0 - c * v0;
+  const f = y0 - b * u0 - d * v0;
+
+  ctx.transform(a, b, c, d, e, f);
+  ctx.drawImage(img, 0, 0, imgW, imgH);
+  ctx.restore();
+}
+
+// ── Handles ───────────────────────────────────────────────────
+const handleIds = ['nw', 'ne', 'sw', 'se', 'center'];
+let handles = {};
+
+function createHandles() {
+  handleLayer.innerHTML = '';
+  handles = {};
+
+  handleIds.forEach(id => {
+    const el = document.createElement('div');
+    el.className = id === 'center' ? 'center-handle' : 'corner-handle';
+    el.dataset.id = id;
+    handleLayer.appendChild(el);
+    handles[id] = el;
+    setupHandleDrag(el, id);
+  });
+}
+
+function updateHandles(nw, ne, sw, se) {
+  if (!handles.nw) return;
+  const cx = (nw.x + ne.x + sw.x + se.x) / 4;
+  const cy = (nw.y + ne.y + sw.y + se.y) / 4;
+
+  setHandlePos(handles.nw, nw.x, nw.y);
+  setHandlePos(handles.ne, ne.x, ne.y);
+  setHandlePos(handles.sw, sw.x, sw.y);
+  setHandlePos(handles.se, se.x, se.y);
+  setHandlePos(handles.center, cx, cy);
+
+  const visible = currentMode === 'overlay' && corners;
+  Object.values(handles).forEach(h => h.style.display = visible ? 'block' : 'none');
+}
+
+function setHandlePos(el, x, y) {
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+}
+
+// ── Handle drag ───────────────────────────────────────────────
+function setupHandleDrag(el, id) {
+  let startX, startY, startCorners;
+
+  el.addEventListener('mousedown', e => {
+    if (currentMode !== 'overlay') return;
+    e.preventDefault();
+    e.stopPropagation();
+    startX = e.clientX;
+    startY = e.clientY;
+    startCorners = JSON.parse(JSON.stringify(corners));
+
+    function onMove(e) {
+      const mapRect = document.getElementById('map').getBoundingClientRect();
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (id === 'center') {
+        // Move all corners
+        ['nw','ne','sw','se'].forEach(k => {
+          const origPx = lngLatToPixelFromCorners(startCorners[k]);
+          const newPx = { x: origPx.x + dx, y: origPx.y + dy };
+          const ll = map.unproject([newPx.x, newPx.y]);
+          corners[k] = { lat: ll.lat, lng: ll.lng };
+        });
+      } else {
+        // Move single corner
+        const origPx = lngLatToPixelFromCorners(startCorners[id]);
+        const newPx = { x: origPx.x + dx, y: origPx.y + dy };
+        const ll = map.unproject([newPx.x, newPx.y]);
+        corners[id] = { lat: ll.lat, lng: ll.lng };
+      }
+
+      drawOverlay();
+      updateFormFromCorners();
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function lngLatToPixelFromCorners(c) {
+  return lngLatToPixel(c.lng, c.lat);
+}
+
+// ── Mode toggle ───────────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('mode-map').classList.toggle('active', mode === 'map');
+  document.getElementById('mode-overlay').classList.toggle('active', mode === 'overlay');
+  document.getElementById('mode-move').classList.toggle('active', mode === 'move');
+
+  if (mode === 'map') {
+    map.dragPan.enable();
+    map.scrollZoom.enable();
+    map.doubleClickZoom.enable();
+    handleLayer.style.pointerEvents = 'none';
+  } else {
+    map.dragPan.disable();
+    map.scrollZoom.enable();
+    handleLayer.style.pointerEvents = mode === 'overlay' ? 'auto' : 'none';
+  }
+
+  drawOverlay();
+}
+
+// ── Image pan (move) mode ─────────────────────────────────────
+(function () {
+  let dragging = false;
+  let startPixel = null;
+  let startCorners = null;
+
+  const mc = document.getElementById('map-container');
+
+  mc.addEventListener('mousedown', e => {
+    if (currentMode !== 'move' || !corners) return;
+    dragging = true;
+    startPixel = { x: e.clientX, y: e.clientY };
+    startCorners = JSON.parse(JSON.stringify(corners));
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - startPixel.x;
+    const dy = e.clientY - startPixel.y;
+
+    ['nw', 'ne', 'sw', 'se'].forEach(k => {
+      const origin = map.project([startCorners[k].lng, startCorners[k].lat]);
+      const moved = map.unproject([origin.x + dx, origin.y + dy]);
+      corners[k] = { lat: moved.lat, lng: moved.lng };
+    });
+
+    updateFormFromCorners();
+    drawOverlay();
+  });
+
+  document.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+// ── KMZ / KML parsing ─────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.style.color = isError ? '#e94560' : '#888';
+}
+
+async function handleFile(file) {
+  setStatus('読み込み中...');
+  document.getElementById('file-info').textContent = file.name;
+
+  try {
+    const name = file.name.toLowerCase();
+
+    if (name.endsWith('.kmz')) {
+      await parseKMZ(file);
+    } else if (name.endsWith('.kml')) {
+      const text = await file.text();
+      parseKML(text, null);
+    } else {
+      setStatus('KMZまたはKMLファイルを選択してください', true);
+    }
+  } catch(err) {
+    setStatus('エラー: ' + err.message, true);
+    console.error(err);
+  }
+}
+
+async function parseKMZ(file) {
+  const zip = await JSZip.loadAsync(file);
+  let kmlText = null;
+  let imageBlob = null;
+  let imageName = null;
+
+  // Find KML file
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (!entry.dir && path.toLowerCase().endsWith('.kml')) {
+      kmlText = await entry.async('text');
+      break;
+    }
+  }
+
+  if (!kmlText) {
+    setStatus('KMLファイルが見つかりません', true);
+    return;
+  }
+
+  // Find image referenced in KML
+  const parser = new DOMParser();
+  const kmlDoc = parser.parseFromString(kmlText, 'text/xml');
+  const iconEls = kmlDoc.querySelectorAll('Icon href, GroundOverlay Icon href');
+
+  // Get href from GroundOverlay Icon
+  let imageHref = null;
+  const groundOverlays = kmlDoc.querySelectorAll('GroundOverlay');
+  groundOverlays.forEach(go => {
+    const icon = go.querySelector('Icon href');
+    if (icon) imageHref = icon.textContent.trim();
+  });
+
+  // Also try generic Icon
+  if (!imageHref) {
+    const icons = kmlDoc.querySelectorAll('Icon href');
+    if (icons.length > 0) imageHref = icons[0].textContent.trim();
+  }
+
+  // Load image from zip
+  if (imageHref) {
+    // Strip path prefix like "files/"
+    const baseName = imageHref.split('/').pop();
+    for (const [path, entry] of Object.entries(zip.files)) {
+      if (!entry.dir && path.split('/').pop().toLowerCase() === baseName.toLowerCase()) {
+        const ext = baseName.split('.').pop().toLowerCase();
+        const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+        const mime = mimeMap[ext] || 'image/jpeg';
+        imageBlob = await entry.async('blob');
+        imageBlob = new Blob([imageBlob], { type: mime });
+        imageName = baseName;
+        break;
+      }
+    }
+  }
+
+  // Fallback: find any image in zip
+  if (!imageBlob) {
+    for (const [path, entry] of Object.entries(zip.files)) {
+      if (!entry.dir && /\.(jpg|jpeg|png|gif|webp)$/i.test(path)) {
+        const ext = path.split('.').pop().toLowerCase();
+        const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+        imageBlob = await entry.async('blob');
+        imageBlob = new Blob([imageBlob], { type: mimeMap[ext] || 'image/jpeg' });
+        imageName = path;
+        break;
+      }
+    }
+  }
+
+  if (!imageBlob) {
+    setStatus('画像ファイルが見つかりません', true);
+    return;
+  }
+
+  if (overlayImageURL) URL.revokeObjectURL(overlayImageURL);
+  overlayImageURL = URL.createObjectURL(imageBlob);
+
+  parseKML(kmlText, overlayImageURL);
+  setStatus('読み込み完了: ' + (imageName || ''));
+}
+
+function parseKML(kmlText, imageURL) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(kmlText, 'text/xml');
+
+  // Try GroundOverlay LatLonBox
+  const latLonBox = doc.querySelector('LatLonBox');
+  if (latLonBox) {
+    const north = parseFloat(latLonBox.querySelector('north')?.textContent);
+    const south = parseFloat(latLonBox.querySelector('south')?.textContent);
+    const east  = parseFloat(latLonBox.querySelector('east')?.textContent);
+    const west  = parseFloat(latLonBox.querySelector('west')?.textContent);
+    const rotation = parseFloat(latLonBox.querySelector('rotation')?.textContent || '0');
+
+    if (!isNaN(north) && !isNaN(south) && !isNaN(east) && !isNaN(west)) {
+      // Apply rotation to get 4 corners
+      corners = computeCornersFromBox(north, south, east, west, rotation);
+      setStatus('LatLonBox 検出');
+    }
+  }
+
+  // Try LatLonQuad
+  const latLonQuad = doc.querySelector('LatLonQuad coordinates, gx\\:LatLonQuad coordinates');
+  if (latLonQuad) {
+    const raw = latLonQuad.textContent.trim().split(/\s+/);
+    // KML order: SW, SE, NE, NW (counter-clockwise)
+    if (raw.length >= 4) {
+      const pts = raw.map(p => {
+        const [lng, lat] = p.split(',').map(parseFloat);
+        return { lat, lng };
+      });
+      corners = { sw: pts[0], se: pts[1], ne: pts[2], nw: pts[3] };
+      setStatus('LatLonQuad 検出');
+    }
+  }
+
+  if (!corners) {
+    // No position info — center on Japan
+    corners = {
+      nw: { lat: 34.7010, lng: 135.4950 },
+      ne: { lat: 34.7010, lng: 135.5050 },
+      sw: { lat: 34.6950, lng: 135.4950 },
+      se: { lat: 34.6950, lng: 135.5050 }
+    };
+    setStatus('座標情報なし: デフォルト位置を使用');
+  }
+
+  // Load image
+  if (imageURL) {
+    loadOverlayImage(imageURL);
+  } else if (!overlayImage) {
+    setStatus('画像URLが指定されていません', true);
+  }
+
+  updateFormFromCorners();
+  document.getElementById('btn-export').disabled = false;
+}
+
+function computeCornersFromBox(north, south, east, west, rotation) {
+  const cx = (east + west) / 2;
+  const cy = (north + south) / 2;
+  const hw = (east - west) / 2;
+  const hh = (north - south) / 2;
+  const rad = -rotation * Math.PI / 180;
+
+  function rotate(dlng, dlat) {
+    const scaleX = Math.cos(cy * Math.PI / 180); // longitude degree → distance scaling
+    const dx = dlng * scaleX;
+    const dy = dlat;
+    const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
+    const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
+    return { lng: cx + rx / scaleX, lat: cy + ry };
+  }
+
+  return {
+    nw: rotate(-hw,  hh),
+    ne: rotate( hw,  hh),
+    sw: rotate(-hw, -hh),
+    se: rotate( hw, -hh)
+  };
+}
+
+function loadOverlayImage(url) {
+  const img = new Image();
+  img.onload = () => {
+    overlayImage = img;
+    createHandles();
+    fitMapToCorners();
+    drawOverlay();
+  };
+  img.onerror = () => setStatus('画像の読み込みに失敗しました', true);
+  img.src = url;
+}
+
+// ── Form sync ─────────────────────────────────────────────────
+function updateFormFromCorners() {
+  if (!corners) return;
+  ['nw','ne','sw','se'].forEach(k => {
+    document.getElementById(k + '-lat').value = corners[k].lat.toFixed(6);
+    document.getElementById(k + '-lng').value = corners[k].lng.toFixed(6);
+  });
+}
+
+function updateCornersFromForm() {
+  ['nw','ne','sw','se'].forEach(k => {
+    const lat = parseFloat(document.getElementById(k + '-lat').value);
+    const lng = parseFloat(document.getElementById(k + '-lng').value);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      if (!corners) corners = { nw:{}, ne:{}, sw:{}, se:{} };
+      corners[k] = { lat, lng };
+    }
+  });
+}
+
+document.getElementById('btn-apply').addEventListener('click', () => {
+  updateCornersFromForm();
+  drawOverlay();
+});
+
+['nw','ne','sw','se'].forEach(k => {
+  ['lat','lng'].forEach(field => {
+    document.getElementById(`${k}-${field}`).addEventListener('input', () => {
+      updateCornersFromForm();
+      drawOverlay();
+    });
+  });
+});
+
+// ── Opacity ───────────────────────────────────────────────────
+document.getElementById('opacity').addEventListener('input', e => {
+  opacity = e.target.value / 100;
+  document.getElementById('opacity-val').textContent = e.target.value + '%';
+  drawOverlay();
+});
+
+// ── Reset view ────────────────────────────────────────────────
+document.getElementById('btn-reset-view').addEventListener('click', fitMapToCorners);
+
+function fitMapToCorners() {
+  if (!corners) return;
+  const lats = Object.values(corners).map(c => c.lat);
+  const lngs = Object.values(corners).map(c => c.lng);
+  const bounds = [
+    [Math.min(...lngs), Math.min(...lats)],
+    [Math.max(...lngs), Math.max(...lats)]
+  ];
+  map.fitBounds(bounds, { padding: 80, duration: 800 });
+}
+
+// ── Map events ────────────────────────────────────────────────
+map.on('render', drawOverlay);
+map.on('resize', () => { resizeCanvas(); drawOverlay(); });
+window.addEventListener('resize', () => { resizeCanvas(); drawOverlay(); });
+
+// ── Export KMZ ────────────────────────────────────────────────
+document.getElementById('btn-export').addEventListener('click', exportKMZ);
+
+async function exportKMZ() {
+  if (!corners || !overlayImageURL) return;
+
+  const exportNameRaw = document.getElementById('export-name').value.trim();
+  const layerName = exportNameRaw || 'overlay_adjusted';
+  const fileName = layerName.replace(/[\\/:*?"<>|]/g, '_') + '.kmz';
+
+  const { sw, se, ne, nw } = corners;
+  const coordStr = [sw, se, ne, nw]
+    .map(c => `${c.lng.toFixed(8)},${c.lat.toFixed(8)},0`)
+    .join(' ');
+
+  // LatLonBox: 4コーナーの軸平行バウンディングボックス（非対応アプリ向けフォールバック）
+  const north = Math.max(nw.lat, ne.lat, sw.lat, se.lat);
+  const south = Math.min(nw.lat, ne.lat, sw.lat, se.lat);
+  const east  = Math.max(nw.lng, ne.lng, sw.lng, se.lng);
+  const west  = Math.min(nw.lng, ne.lng, sw.lng, se.lng);
+
+  // 画像の拡張子を元ファイルから引き継ぐ
+  const imgExt = overlayImageURL.split(';')[0].split('/')[1] || 'jpg';
+  const imgFilename = `overlay.${imgExt}`;
+
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"
+     xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <GroundOverlay>
+    <name>${layerName}</name>
+    <Icon>
+      <href>${imgFilename}</href>
+    </Icon>
+    <LatLonBox>
+      <north>${north.toFixed(8)}</north>
+      <south>${south.toFixed(8)}</south>
+      <east>${east.toFixed(8)}</east>
+      <west>${west.toFixed(8)}</west>
+      <rotation>0</rotation>
+    </LatLonBox>
+    <gx:LatLonQuad>
+      <coordinates>${coordStr}</coordinates>
+    </gx:LatLonQuad>
+  </GroundOverlay>
+</kml>`;
+
+  // 画像をBlobとして取得
+  const imgResp = await fetch(overlayImageURL);
+  const imgBlob = await imgResp.blob();
+
+  const zip = new JSZip();
+  zip.file('doc.kml', kml);
+  zip.file(imgFilename, imgBlob);
+
+  const kmzBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(kmzBlob);
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Init ──────────────────────────────────────────────────────
+resizeCanvas();
+createHandles();
+setMode('map');
+</script>
+</body>
+</html>

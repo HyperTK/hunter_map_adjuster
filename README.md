@@ -82,7 +82,8 @@
 ## Mapbox タイルセットの重ね表示（任意）
 
 `config.js` の `tilesetId` と `tilesetLayerName` を設定すると、Mapbox Studio でアップロードした独自タイルセット（ポリゴン・ラインなど）を地図上にあらかじめ重ねて表示できます。
-例えば、国土数値情報の鳥獣保護区のGeoJsonをMapboxにアップロードすれば、過去の保護区を目印に地図を移動させて精密な位置合わせが可能です。
+例えば、国土数値情報の鳥獣保護区データをGeoJson化してMapboxにアップロードすれば、過去の保護区を目印に地図を移動させて精密な位置合わせが可能です。
+GeoJsonを直接取り込めるようにファイルを改変することも可能です。元データはユーザ自身で取得、加工してください。
 
 ```js
 tilesetId: 'username.xxxxxxxxxx',   // Mapbox Studio のタイルセット ID

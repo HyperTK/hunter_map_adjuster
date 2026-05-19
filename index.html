@@ -240,6 +240,53 @@
     margin-top: 6px;
     line-height: 1.5;
   }
+
+  /* Layer switcher */
+  #layer-switcher {
+    position: absolute;
+    top: 150px;
+    right: 12px;
+    z-index: 10;
+    background: rgba(15,52,96,0.92);
+    border-radius: 10px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 130px;
+  }
+
+  #layer-switcher-title {
+    font-size: 10px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 0 4px 4px;
+    border-bottom: 1px solid #1a4a8a;
+    margin-bottom: 2px;
+  }
+
+  .layer-btn {
+    width: auto;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    background: transparent;
+    color: #aaa;
+    border: 1px solid transparent;
+    text-align: left;
+  }
+
+  .layer-btn.active {
+    background: #0f3460;
+    color: #eee;
+    border-color: #1a4a8a;
+  }
+
+  .layer-btn:hover:not(.active) {
+    background: rgba(255,255,255,0.07);
+    color: #eee;
+  }
 </style>
 </head>
 <body>
@@ -323,15 +370,32 @@
     <button class="mode-btn" id="mode-overlay" onclick="setMode('overlay')">オーバーレイ調整</button>
     <button class="mode-btn" id="mode-move" onclick="setMode('move')">画像移動</button>
   </div>
+
+  <div id="layer-switcher">
+    <div id="layer-switcher-title">ベースマップ</div>
+    <button class="layer-btn active" data-layer="streets" onclick="setBaseLayer('streets')">Normal</button>
+    <button class="layer-btn" data-layer="outdoors" onclick="setBaseLayer('outdoors')">Outdoor</button>
+    <button class="layer-btn" data-layer="satellite" onclick="setBaseLayer('satellite')">Satellite</button>
+    <button class="layer-btn" data-layer="gsi" onclick="setBaseLayer('gsi')">地理院地図</button>
+  </div>
 </div>
 
 <script>
 // ── Mapbox setup ──────────────────────────────────────────────
 mapboxgl.accessToken = CONFIG.mapboxToken;
 
+const BASE_LAYERS = {
+  streets:   'mapbox://styles/mapbox/streets-v12',
+  outdoors:  'mapbox://styles/mapbox/outdoors-v12',
+  satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
+  gsi: null,  // 国土地理院は独自ロード
+};
+
+let currentBaseLayer = 'streets';
+
 const map = new mapboxgl.Map({
   container: 'map',
-  style: 'mapbox://styles/mapbox/streets-v12',
+  style: BASE_LAYERS.streets,
   center: [135.5, 34.7],
   zoom: 10
 });
@@ -343,47 +407,94 @@ map.addControl(new mapboxgl.ScaleControl());
 const TILESET_ID = CONFIG.tilesetId;
 const TILESET_LAYER_NAME = CONFIG.tilesetLayerName;
 
-map.on('load', () => {
-  // 日本語化
+function applyJaLabels() {
   map.getStyle().layers.forEach(layer => {
     if (!layer.layout || !layer.layout['text-field']) return;
-    // ref（道路番号）専用レイヤーのみ ref を使う。それ以外は name_ja → name の順で表示。
     if (layer.id.includes('road-number') || layer.id.includes('shield')) {
       map.setLayoutProperty(layer.id, 'text-field', ['coalesce', ['get', 'ref'], ['get', 'name']]);
     } else {
       map.setLayoutProperty(layer.id, 'text-field', ['coalesce', ['get', 'name_ja'], ['get', 'name']]);
     }
   });
+}
 
-  if (TILESET_ID && TILESET_LAYER_NAME) {
+function addTilesetLayer() {
+  if (!TILESET_ID || !TILESET_LAYER_NAME) return;
+  if (!map.getSource('custom-tileset')) {
     map.addSource('custom-tileset', {
       type: 'vector',
       url: `mapbox://${TILESET_ID}`
     });
-
+  }
+  if (!map.getLayer('tileset-fill')) {
     map.addLayer({
       id: 'tileset-fill',
       type: 'fill',
       source: 'custom-tileset',
       'source-layer': TILESET_LAYER_NAME,
-      paint: {
-        'fill-color': '#ff6666',
-        'fill-opacity': 0.4
-      }
+      paint: { 'fill-color': '#ff6666', 'fill-opacity': 0.4 }
     });
-
+  }
+  if (!map.getLayer('tileset-line')) {
     map.addLayer({
       id: 'tileset-line',
       type: 'line',
       source: 'custom-tileset',
       'source-layer': TILESET_LAYER_NAME,
-      paint: {
-        'line-color': '#cc0000',
-        'line-width': 1.5
-      }
+      paint: { 'line-color': '#cc0000', 'line-width': 1.5 }
     });
   }
+}
+
+function addGsiLayer() {
+  if (!map.getSource('gsi-tiles')) {
+    map.addSource('gsi-tiles', {
+      type: 'raster',
+      tiles: ['https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+    });
+  }
+  if (!map.getLayer('gsi-layer')) {
+    map.addLayer({ id: 'gsi-layer', type: 'raster', source: 'gsi-tiles' });
+  }
+}
+
+map.on('load', () => {
+  if (currentBaseLayer !== 'gsi') applyJaLabels();
+  if (currentBaseLayer === 'gsi') addGsiLayer();
+  addTilesetLayer();
 });
+
+// ── Base layer switcher ───────────────────────────────────────
+function setBaseLayer(layerId) {
+  if (currentBaseLayer === layerId) return;
+  currentBaseLayer = layerId;
+
+  // ボタンのアクティブ状態を更新
+  document.querySelectorAll('.layer-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.layer === layerId);
+  });
+
+  if (layerId === 'gsi') {
+    // 地理院地図: 空のスタイルに切り替えてタイルを追加
+    map.setStyle({
+      version: 8,
+      sources: {},
+      layers: []
+    });
+    map.once('style.load', () => {
+      addGsiLayer();
+      addTilesetLayer();
+    });
+  } else {
+    map.setStyle(BASE_LAYERS[layerId]);
+    map.once('style.load', () => {
+      applyJaLabels();
+      addTilesetLayer();
+    });
+  }
+}
 
 // ── State ─────────────────────────────────────────────────────
 let overlayImage = null;   // HTMLImageElement
